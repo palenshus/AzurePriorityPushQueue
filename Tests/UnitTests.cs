@@ -1,4 +1,5 @@
-﻿using System.Threading;
+﻿using System.Collections.Generic;
+using System.Threading;
 using AMPSoft;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -45,16 +46,27 @@ namespace Tests
             var queue = new AzurePriorityPushQueue("UseDevelopmentStorage=true", "test");
             queue.Clear();
 
-            queue.AddMessage("Low", QueuePriority.Low);
-            queue.AddMessage("Default", QueuePriority.Default);
-            queue.AddMessage("High", QueuePriority.High);
-            Assert.AreEqual(3, queue.ApproximateMessageCount(), "ApproximateMessageCount should be 3");
+            var expectedPriorities = new List<QueuePriority>
+            {
+                QueuePriority.High,
+                QueuePriority.High,
+                QueuePriority.Default,
+                QueuePriority.Default,
+                QueuePriority.Low,
+                QueuePriority.Low,
+            };
 
-            int expectedPriority = (int)QueuePriority.High;
+            foreach (var priority in expectedPriorities)
+            {
+                queue.AddMessage(priority.ToString(), priority);
+            }
 
+            Assert.AreEqual(6, queue.ApproximateMessageCount(), $"ApproximateMessageCount should be {expectedPriorities.Count}");
+
+            int expectedPriorityIndex = 0;
             queue.Received += (o, e) =>
             {
-                Assert.AreEqual(e.MessageWrapper.Message.AsString, ((QueuePriority)expectedPriority--).ToString(), "Messages should be dequeued in prioritized order");
+                Assert.AreEqual(e.MessageWrapper.Message.AsString, expectedPriorities[expectedPriorityIndex++].ToString(), "Messages should be dequeued in prioritized order");
                 e.MessageWrapper.Delete();
             };
             TestContext.WriteLine("Handler added");

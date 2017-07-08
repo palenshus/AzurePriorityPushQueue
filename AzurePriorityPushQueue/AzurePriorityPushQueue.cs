@@ -53,19 +53,18 @@ namespace AMPSoft
             policy.Execute((cancellationToken) =>
             {
                 receivedHandled.WaitOne();
-                bool messageReceived = false;
                 foreach (QueuePriority priority in Enum.GetValues(typeof(QueuePriority)).Cast<QueuePriority>().OrderByDescending(p => p))
                 {
                     var queue = GetAzureQueue(priority, false);
                     var message = queue?.GetMessage(this.VisibilityTimeout);
                     if (message != null)
                     {
-                        messageReceived = true;
                         var eventArgs = new MessageReceivedEventArgs { MessageWrapper = new MessageWrapper(message, queue) };
                         OnReceived(eventArgs);
+                        return true;
                     }
                 }
-                return messageReceived;
+                return false;
             }, this.cancellationToken.Token);
         }
 
