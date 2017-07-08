@@ -2,6 +2,8 @@
 
 An Azure Storage Queue wrapper that supports priorities and abstracts exponential backoff polling away with an event-driven interface
 
+-- This is just an MVP at this stage, contributions welcome to get this fully featured!
+
 # Installing via NuGet
 
     Install-Package AMPSoft.AzurePriorityPushQueue
