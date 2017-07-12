@@ -10,7 +10,7 @@
     <projectUrl>https://github.com/palenshus/AzurePriorityPushQueue</projectUrl>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
     <description>$description$</description>
-    <releaseNotes>First release</releaseNotes>
+    <releaseNotes>Updated with support for batch messages</releaseNotes>
     <copyright>Copyright 2017</copyright>
     <tags>azure storage queue prioritized push wrapper</tags>
   </metadata>

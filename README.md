@@ -29,8 +29,18 @@ queue.ApproximateMessageCount(); // returns 3
 
 // Register an event handler to handle dequeues
 // Under the covers, it will poll with exponential backoff, up to a max of 30 seconds in between pollings
-queue.Received += (o, e) =>
+queue.MessageReceived += (o, e) =>
 {
     Console.WriteLine(e.MessageWrapper.Message.AsString);
     e.MessageWrapper.Delete();
+};
+
+// Or, you can register to receive multiple messages at once (default 32, settable with DequeueCount)
+queue.MessagesReceived += (o, e) =>
+{
+    Parallel.ForEach(e.MessageWrappers, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount }, m =>
+    {
+        Console.WriteLine(m.Message.AsString);
+        m.Delete();
+    });
 };

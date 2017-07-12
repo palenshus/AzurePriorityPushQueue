@@ -22,11 +22,14 @@ namespace AMPSoft
         Dictionary<QueuePriority, CloudQueue> queues;
         string connectionString;
         string queueNameBase;
-        private EventHandler<MessageReceivedEventArgs> received;
+        private EventHandler<MessageReceivedEventArgs> messageReceivedHandler;
+        private EventHandler<MessagesReceivedEventArgs> messagesReceivedHandler;
         ManualResetEvent receivedHandled;
         CancellationTokenSource cancellationToken;
 
         public TimeSpan? VisibilityTimeout { get; set; }
+
+        public int DequeueCount { get; set; } = 32;
 
         public AzurePriorityPushQueue(string connectionString, string queueName)
         {
@@ -56,12 +59,26 @@ namespace AMPSoft
                 foreach (QueuePriority priority in Enum.GetValues(typeof(QueuePriority)).Cast<QueuePriority>().OrderByDescending(p => p))
                 {
                     var queue = GetAzureQueue(priority, false);
-                    var message = queue?.GetMessage(this.VisibilityTimeout);
-                    if (message != null)
+                    if (this.messageReceivedHandler != null)
                     {
-                        var eventArgs = new MessageReceivedEventArgs { MessageWrapper = new MessageWrapper(message, queue) };
-                        OnReceived(eventArgs);
-                        return true;
+                        var message = queue?.GetMessage(this.VisibilityTimeout);
+                        if (message != null)
+                        {
+                            var eventArgs = new MessageReceivedEventArgs { MessageWrapper = new MessageWrapper(message, queue) };
+                            OnMessageReceived(eventArgs);
+                            return true;
+                        }
+                    }
+
+                    if (this.messagesReceivedHandler != null)
+                    {
+                        var messages = queue?.GetMessages(DequeueCount, this.VisibilityTimeout);
+                        if (messages.Any())
+                        {
+                            var eventArgs = new MessagesReceivedEventArgs { MessageWrappers = messages.Select(m => new MessageWrapper(m, queue)) };
+                            OnMessagesReceived(eventArgs);
+                            return true;
+                        }
                     }
                 }
                 return false;
@@ -106,26 +123,48 @@ namespace AMPSoft
             Enum.GetValues(typeof(QueuePriority)).Cast<QueuePriority>().ToList().ForEach(p => this.Clear(p));
         }
 
-        public event EventHandler<MessageReceivedEventArgs> Received
+        public event EventHandler<MessageReceivedEventArgs> MessageReceived
         {
             add
             {
-                this.received += value;
+                this.messageReceivedHandler += value;
                 this.receivedHandled.Set();
             }
             remove
             {
-                this.received -= value;
-                if (this.received == null)
+                this.messageReceivedHandler -= value;
+                if (this.messageReceivedHandler == null)
                 {
                     this.receivedHandled.Reset();
                 }
             }
         }
 
-        protected virtual void OnReceived(MessageReceivedEventArgs e)
+        public event EventHandler<MessagesReceivedEventArgs> MessagesReceived
         {
-            this.received?.Invoke(this, e);
+            add
+            {
+                this.messagesReceivedHandler += value;
+                this.receivedHandled.Set();
+            }
+            remove
+            {
+                this.messagesReceivedHandler -= value;
+                if (this.messagesReceivedHandler == null)
+                {
+                    this.receivedHandled.Reset();
+                }
+            }
+        }
+
+        protected virtual void OnMessageReceived(MessageReceivedEventArgs e)
+        {
+            this.messageReceivedHandler?.Invoke(this, e);
+        }
+
+        protected virtual void OnMessagesReceived(MessagesReceivedEventArgs e)
+        {
+            this.messagesReceivedHandler?.Invoke(this, e);
         }
 
         private CloudQueue GetAzureQueue(QueuePriority priority, bool createIfNotExists)
@@ -192,5 +231,10 @@ namespace AMPSoft
     public class MessageReceivedEventArgs : EventArgs
     {
         public MessageWrapper MessageWrapper { get; set; }
+    }
+
+    public class MessagesReceivedEventArgs : EventArgs
+    {
+        public IEnumerable<MessageWrapper> MessageWrappers { get; set; }
     }
 }

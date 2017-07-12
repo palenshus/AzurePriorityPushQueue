@@ -1,5 +1,8 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using AMPSoft;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -16,7 +19,7 @@ namespace Tests
             var queue = new AzurePriorityPushQueue("UseDevelopmentStorage=true", "test");
             queue.Clear();
             TestContext.WriteLine("Queue created, but no handlers registered");
-            
+
             queue.AddMessage("1");
             Assert.AreEqual(1, queue.ApproximateMessageCount(), "ApproximateMessageCount should be 1");
 
@@ -24,13 +27,12 @@ namespace Tests
 
             Assert.AreEqual(1, queue.ApproximateMessageCount(), "ApproximateMessageCount should still be 1");
 
-            queue.Received += MessageReceived;
+            queue.MessageReceived += MessageReceived;
             TestContext.WriteLine("Handler added");
-            Thread.Sleep(2000);
 
-            Assert.AreEqual(0, queue.ApproximateMessageCount(), "Now queue length should be 0");
+            WaitForQueueLength(queue, 0);
 
-            queue.Received -= MessageReceived;
+            queue.MessageReceived -= MessageReceived;
             TestContext.WriteLine("Handler removed");
 
             queue.AddMessage("2");
@@ -61,18 +63,72 @@ namespace Tests
                 queue.AddMessage(priority.ToString(), priority);
             }
 
-            Assert.AreEqual(6, queue.ApproximateMessageCount(), $"ApproximateMessageCount should be {expectedPriorities.Count}");
+            Assert.AreEqual(expectedPriorities.Count, queue.ApproximateMessageCount(), $"ApproximateMessageCount should be {expectedPriorities.Count}");
 
             int expectedPriorityIndex = 0;
-            queue.Received += (o, e) =>
+            queue.MessageReceived += (o, e) =>
             {
                 Assert.AreEqual(e.MessageWrapper.Message.AsString, expectedPriorities[expectedPriorityIndex++].ToString(), "Messages should be dequeued in prioritized order");
                 e.MessageWrapper.Delete();
             };
             TestContext.WriteLine("Handler added");
 
-            Thread.Sleep(2000);
-            Assert.AreEqual(0, queue.ApproximateMessageCount(), "ApproximateMessageCount should be 0");
+            WaitForQueueLength(queue, 0);
+        }
+
+        [TestMethod]
+        public void TestMultipleMessages()
+        {
+            var queue = new AzurePriorityPushQueue("UseDevelopmentStorage=true", "test");
+            queue.Clear();
+
+            var expectedPriorities = new List<QueuePriority>
+            {
+                QueuePriority.High,
+                QueuePriority.Default,
+                QueuePriority.Low,
+            };
+
+            int messageCountPerQueue = 64;
+            for (int i = 0; i < messageCountPerQueue; i++)
+            {
+                foreach (var priority in expectedPriorities)
+                {
+                    queue.AddMessage(priority.ToString(), priority);
+                }
+            }
+
+            Assert.AreEqual(expectedPriorities.Count * messageCountPerQueue, queue.ApproximateMessageCount(), $"ApproximateMessageCount should be {expectedPriorities.Count * messageCountPerQueue}");
+
+            int expectedPriorityIndex = 0;
+            queue.MessagesReceived += (o, e) =>
+            {
+                Assert.AreEqual(32, e.MessageWrappers.Count(), $"MessagesReceivedEventArgs should contain 32 messages");
+                Parallel.ForEach(e.MessageWrappers, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount }, m =>
+                {
+                    Assert.AreEqual(m.Message.AsString, expectedPriorities[expectedPriorityIndex / 2].ToString(), "Messages should be dequeued in prioritized order");
+                    m.Delete();
+                });
+                expectedPriorityIndex++;
+            };
+            TestContext.WriteLine("Handler added");
+
+            WaitForQueueLength(queue, 0);
+        }
+
+        void WaitForQueueLength(AzurePriorityPushQueue queue, int targetLength)
+        {
+            TestContext.WriteLine($"Waiting for queue length of {targetLength}");
+            for (int i = 0; i < 60; i++)
+            {
+                Thread.Sleep(500);
+                if (queue.ApproximateMessageCount() == targetLength)
+                {
+                    Assert.AreEqual(targetLength, queue.ApproximateMessageCount(), $"ApproximateMessageCount should be {targetLength}");
+                    return;
+                }
+            }
+            Assert.Fail($"Desired queue length of {targetLength} not reached after 30 seconds, current length {queue.ApproximateMessageCount()}");
         }
 
         void MessageReceived(object sender, MessageReceivedEventArgs e)
