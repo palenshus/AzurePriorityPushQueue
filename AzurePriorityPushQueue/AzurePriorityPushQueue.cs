@@ -3,8 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.WindowsAzure.Storage;
-using Microsoft.WindowsAzure.Storage.Queue;
+using Azure.Storage.Queues;
+using Azure.Storage.Queues.Models;
 using Newtonsoft.Json;
 using Polly;
 
@@ -19,7 +19,7 @@ namespace AMPSoft
 
     public class AzurePriorityPushQueue
     {
-        Dictionary<QueuePriority, CloudQueue> queues;
+        Dictionary<QueuePriority, QueueClient> queues;
         string connectionString;
         string queueNameBase;
         private EventHandler<MessageReceivedEventArgs> messageReceivedHandler;
@@ -33,7 +33,7 @@ namespace AMPSoft
 
         public AzurePriorityPushQueue(string connectionString, string queueName)
         {
-            this.queues = new Dictionary<QueuePriority, CloudQueue>();
+            this.queues = new Dictionary<QueuePriority, QueueClient>();
             this.connectionString = connectionString;
             this.queueNameBase = queueName;
             this.receivedHandled = new ManualResetEvent(false);
@@ -61,7 +61,7 @@ namespace AMPSoft
                     var queue = GetAzureQueue(priority, false);
                     if (this.messageReceivedHandler != null)
                     {
-                        var message = queue?.GetMessage(this.VisibilityTimeout);
+                        var message = queue?.ReceiveMessage(this.VisibilityTimeout)?.Value;
                         if (message != null)
                         {
                             var eventArgs = new MessageReceivedEventArgs { MessageWrapper = new MessageWrapper(message, queue) };
@@ -72,7 +72,8 @@ namespace AMPSoft
 
                     if (this.messagesReceivedHandler != null)
                     {
-                        var messages = queue?.GetMessages(DequeueCount, this.VisibilityTimeout);
+                        var response = queue?.ReceiveMessages(DequeueCount, this.VisibilityTimeout);
+                        var messages = response.Value;
                         if (messages.Any())
                         {
                             var eventArgs = new MessagesReceivedEventArgs { MessageWrappers = messages.Select(m => new MessageWrapper(m, queue)) };
@@ -93,19 +94,18 @@ namespace AMPSoft
 
         public void AddMessage(string content, QueuePriority priority = QueuePriority.Default, TimeSpan? timeToLive = null, TimeSpan? initialVisibilityDelay = null)
         {
-            this.AddMessage(new CloudQueueMessage(content), priority, timeToLive, initialVisibilityDelay);
+            GetAzureQueue(priority, true).SendMessage(content, timeToLive, initialVisibilityDelay);
         }
 
-        public void AddMessage(CloudQueueMessage message, QueuePriority priority = QueuePriority.Default, TimeSpan? timeToLive = null, TimeSpan? initialVisibilityDelay = null)
+        public void AddMessage(QueueMessage message, QueuePriority priority = QueuePriority.Default, TimeSpan? timeToLive = null, TimeSpan? initialVisibilityDelay = null)
         {
-            GetAzureQueue(priority, true).AddMessage(message, timeToLive, initialVisibilityDelay);
+            this.AddMessage(message, priority, timeToLive, initialVisibilityDelay);
         }
 
         public int? ApproximateMessageCount(QueuePriority priority)
         {
             var queue = GetAzureQueue(priority, false);
-            queue?.FetchAttributes();
-            return queue?.ApproximateMessageCount;
+            return queue?.GetProperties().Value.ApproximateMessagesCount;
         }
 
         public int? ApproximateMessageCount()
@@ -115,7 +115,7 @@ namespace AMPSoft
 
         public void Clear(QueuePriority priority)
         {
-            GetAzureQueue(priority, false)?.Clear();
+            GetAzureQueue(priority, false)?.ClearMessages();
         }
 
         public void Clear()
@@ -167,31 +167,24 @@ namespace AMPSoft
             this.messagesReceivedHandler?.Invoke(this, e);
         }
 
-        private CloudQueue GetAzureQueue(QueuePriority priority, bool createIfNotExists)
+        private QueueClient GetAzureQueue(QueuePriority priority, bool createIfNotExists)
         {
             if (!queues.ContainsKey(priority))
             {
-                // Retrieve storage account from connection string
-                CloudStorageAccount storageAccount = CloudStorageAccount.Parse(connectionString);
-
                 // Create the queue client
-                CloudQueueClient queueClient = storageAccount.CreateCloudQueueClient();
-
                 string queueName = GetQueueName(this.queueNameBase, priority);
-
-                // Retrieve a reference to a queue
-                CloudQueue queue = queueClient.GetQueueReference(queueName);
+                QueueClient queueClient = new QueueClient(connectionString, queueName);
 
                 // Create the queue if it doesn't already exist and the flag is set
                 if (createIfNotExists)
                 {
-                    queue.CreateIfNotExists();
+                    queueClient.CreateIfNotExists();
                 }
 
-                if (queue.Exists())
+                if (queueClient.Exists())
                 {
-                    queues.Add(priority, queue);
-                    return queue;
+                    queues.Add(priority, queueClient);
+                    return queueClient;
                 }
                 else
                 {
@@ -212,11 +205,11 @@ namespace AMPSoft
 
     public class MessageWrapper
     {
-        CloudQueue queue;
+        QueueClient queue;
 
-        public CloudQueueMessage Message { get; set; }
+        public QueueMessage Message { get; set; }
 
-        public MessageWrapper(CloudQueueMessage message, CloudQueue queue)
+        public MessageWrapper(QueueMessage message, QueueClient queue)
         {
             this.Message = message;
             this.queue = queue;
@@ -224,7 +217,7 @@ namespace AMPSoft
 
         public void Delete()
         {
-            this.queue.DeleteMessage(this.Message);
+            this.queue.DeleteMessage(this.Message.MessageId, this.Message.PopReceipt);
         }
     }
 
